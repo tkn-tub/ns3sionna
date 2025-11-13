@@ -7,12 +7,11 @@
  */
 
 #include "sionna-helper.h"
-
-#include "sionna-mobility-model.h"
-
 #include "ns3/core-module.h"
 #include "ns3/mobility-module.h"
 #include "ns3/network-module.h"
+#include "sionna-mobility-model.h"
+#include "sionna-utils.h"
 
 namespace ns3
 {
@@ -20,15 +19,20 @@ namespace ns3
 NS_LOG_COMPONENT_DEFINE("SionnaHelper");
 
 SionnaHelper::SionnaHelper(std::string environment, std::string zmq_url): m_environment(environment),
-    m_mode(MODE_P2MP_LAH), m_sub_mode(1), m_zmq_context(1), m_zmq_socket(m_zmq_context, ZMQ_REQ)
+    m_zmq_context(1), m_zmq_socket(m_zmq_context, ZMQ_REQ)
 {
     // Connect
     m_zmq_socket.connect(zmq_url);
-    m_frequency = 2412e6;
-    SetChannelBandwidth(20e6);
-    m_fft_size = 64;
+    m_mode = MODE_P2MP_LAH;
+    m_sub_mode = 1;
+    // WiFi 6
+    m_frequency = 5210;
+    SetChannelBandwidth(80 * 3);
+    m_fft_size = 1024 * 3;
+    m_subcarrier_spacing = 78125;
+    m_min_coherence_time_ms = 100000; // min coherence time is 100s
 
-    std::cout << "Ns-3 client socket ready ..." << std::endl;
+    std::cout << "Env: " << m_environment << std::endl;
 }
 
 SionnaHelper::~SionnaHelper()
@@ -36,13 +40,19 @@ SionnaHelper::~SionnaHelper()
 }
 
 void
-SionnaHelper::SetFrequency(double frequency)
+SionnaHelper::SetFrequency(int frequency)
 {
     m_frequency = frequency;
 }
 
+int
+SionnaHelper::GetFrequency()
+{
+    return m_frequency;
+}
+
 void
-SionnaHelper::SetChannelBandwidth(double channel_bw)
+SionnaHelper::SetChannelBandwidth(int channel_bw)
 {
     m_channel_bw = channel_bw;
 
@@ -66,6 +76,12 @@ SionnaHelper::SetFFTSize(int fft_size)
 }
 
 void
+SionnaHelper::SetSubcarrierSpacing(int subcarrier_spacing)
+{
+    m_subcarrier_spacing = subcarrier_spacing;
+}
+
+void
 SionnaHelper::SetMode(int mode)
 {
     m_mode = mode;
@@ -78,11 +94,27 @@ SionnaHelper::SetSubMode(int sub_mode)
 }
 
 void
-SionnaHelper::Configure(double frequency, double channel_bw)
+SionnaHelper::Configure(int frequency, int channel_bw, int fft_size, int ofdm_subcarrier_spacing, int min_coherence_time_ms)
 {
+    m_min_coherence_time_ms = min_coherence_time_ms;
+    Configure(frequency, channel_bw, fft_size, ofdm_subcarrier_spacing);
+}
+
+void
+SionnaHelper::Configure(int frequency, int channel_bw, int fft_size, int ofdm_subcarrier_spacing)
+{
+    NS_ASSERT_MSG(frequency >= 0, "Center frequency must be positive");
+    NS_ASSERT_MSG(channel_bw >= 0 && channel_bw <= 10000, "Channel bandwidth must be between 0 and 10000 MHz");
+    NS_ASSERT_MSG(fft_size >= 0, "FFT size must be positive");
+    NS_ASSERT_MSG(ofdm_subcarrier_spacing >= 0, "OFDM subcarrier spacing must be positive");
+
     SetFrequency(frequency);
-    SetChannelBandwidth(channel_bw);
-    SetFFTSize(64 * (channel_bw/20e6)); // AZU: todo make configureable
+    SetChannelBandwidth(channel_bw * GUARD_MULTIPLIER); // effective channel bandwidth is 3x due to guard bands
+    SetFFTSize(fft_size * GUARD_MULTIPLIER);
+    SetSubcarrierSpacing(ofdm_subcarrier_spacing);
+
+    std::cout << "ns3sionna configured with fc= " << frequency << "MHz, B=" << m_channel_bw
+        << "MHz" << ", FFT=" << m_fft_size << ", MinTc=" << m_min_coherence_time_ms << "ms" << std::endl;
 }
 
 double
@@ -125,6 +157,10 @@ SionnaHelper::RandomVariableStreamMessage(ns3sionna::SimInitMessage::NodeInfo::R
 void
 SionnaHelper::Start()
 {
+    std::cout << "ns3sionna configured for mode: " << m_mode << ", submode: " << m_sub_mode << std::endl;
+
+    std::cout << "ns3sionna: trying to connect to sionna" << std::endl;
+
     // Prepare the information message
     ns3sionna::Wrapper wrapper;
 
@@ -135,6 +171,8 @@ SionnaHelper::Start()
     simulation_info->set_frequency(m_frequency);
     simulation_info->set_channel_bw(m_channel_bw);
     simulation_info->set_fft_size(m_fft_size);
+    simulation_info->set_min_coherence_time_ms(m_min_coherence_time_ms);
+    simulation_info->set_subcarrier_spacing(m_subcarrier_spacing);
     simulation_info->set_mode(m_mode);
     simulation_info->set_sub_mode(m_sub_mode);
 
@@ -211,8 +249,14 @@ SionnaHelper::Start()
     // Check if the reply message is an ack
     ns3sionna::Wrapper reply_wrapper;
     reply_wrapper.ParseFromArray(zmq_reply.data(), zmq_reply.size());
-    
-    NS_ASSERT_MSG(reply_wrapper.has_sim_ack(), "Reply after simulation information is not an ack.");
+
+    if (reply_wrapper.has_sim_ack())
+    {
+        std::cout << "ns3sionna: connection ... OK" << std::endl;
+    } else
+    {
+        std::cerr << "ns3sionna: connection ... FAILED" << std::endl;
+    }
 }
 
 void
@@ -244,7 +288,7 @@ SionnaHelper::Destroy()
 
     // Close socket
     m_zmq_socket.close();
-    std::cout << "Ns3-sionna ZMQ socket closed." << std::endl;
+    std::cout << "ns3sionna socket closed" << std::endl;
 }
 
 } // namespace ns3

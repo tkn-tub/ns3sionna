@@ -31,6 +31,8 @@ except ImportError:
 try:
     import sionna
     print("Package sionna is installed")
+    print(sionna.__version__)
+
 except ImportError:
     print("Package sionna is not installed")
 

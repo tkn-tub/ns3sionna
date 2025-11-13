@@ -47,7 +47,6 @@ Time
 SionnaPropagationDelayModel::GetDelay(Ptr<MobilityModel> a, Ptr<MobilityModel> b) const
 {
     NS_ASSERT_MSG(m_propagationCache, "SionnaPropagationDelayModel must have a SionnaPropagationCache.");
-    NS_LOG_INFO("Node " << a->GetPosition() << " to Node " << b->GetPosition());
     return m_propagationCache->GetPropagationDelay(a, b);
 }
 

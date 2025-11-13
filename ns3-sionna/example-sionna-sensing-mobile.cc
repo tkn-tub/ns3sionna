@@ -27,24 +27,33 @@
 
 
 /**
- * Outdoor (munich) example showing the use of MultiModelSpectrumChannel with ns3sionna.
- * Scenario: single AP with two connected STAs operating on 80 MHz channel in room scenario.
- * All WiFi nodes are static and each STA sends a single packet from which the CSI is retrieved
- * and stored in a file.
- * Note: due to fully static configuration the channel is only computed once.
+ * Advanced example showing how to access the CSI computed by Sionna in a scenario with static AP
+ * and mobile STA using 80 MHz channel in simple room scenario. STA sends packets to the AP from
+ * which the CSI is retrieved and exported to a file for later plotting.
+ * Note: Due to mobility the channel needs to be recomputed. The number of recomputations depends
+ * on the speed of the mobile (coherence time) and the traffic pattern.
  *
  * Limitations: only SISO so far
  *
- * ./ns3 run scratch/ns3-sionna/example-munich-sionna
- * python3 ./scratch/ns3-sionna/plot_csi.py munich_csi_node0.csv
+ *  To run: ./example-sionna-sensing-mobile.sh
  */
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("ExampleMunichSionna");
+NS_LOG_COMPONENT_DEFINE("ExampleSionnaSensing");
 
 // mapping of IPv4 addr to nodeIds
 std::map<Ipv4Address, uint32_t> g_ipToNodeIdMap;
+
+// CSI
+std::string csiFname = "example-sionna-sensing-mobile.csv";
+std::ofstream ofs_csi(csiFname);
+// Pathloss
+std::string plFname = "example-sionna-sensing-mobile-pathloss.csv";
+std::ofstream ofs_pl(plFname);
+// RX (STA) node location
+std::string tpFname = "example-sionna-sensing-mobile-time-pos.csv";
+std::ofstream ofs_tp(tpFname);
 
 void BuildIpToNodeIdMap ()
 {
@@ -92,13 +101,12 @@ uint32_t GetNodeIdFromIpv4Address (Ipv4Address targetAddr)
  */
 void RxTraceWithAddresses(std::string context, Ptr<const Packet> packet, const Address &from, const Address &to) {
 
-    // Lookup ID of transmitter
+    // Lookup ID of transmitter & receiver
     uint32_t src_nodeId = GetNodeIdFromIpv4Address(InetSocketAddress::ConvertFrom(from).GetIpv4());
     Ptr<Node> src_node = NodeList::GetNode(src_nodeId);
     Ptr<MobilityModel> mobility = src_node->GetObject<MobilityModel>();
     Vector pos = mobility->GetPosition();
-
-    NS_LOG_INFO(Simulator::Now().GetSeconds() << "s: " << src_node->GetId() << ": (" << pos.x << "," << pos.y << "," << pos.z << ")");
+    NS_LOG_INFO(Simulator::Now().GetSeconds() << "s: Node: " << src_node->GetId() << ": Pos: (" << pos.x << "," << pos.y << "," << pos.z << ")");
 
     NS_LOG_INFO("*** " << Simulator::Now().GetSeconds() << "s [" << context << "]: Server received packet of " << packet->GetSize() << " bytes"
         << " from: " << InetSocketAddress::ConvertFrom(from).GetIpv4() << "(" << src_nodeId << ") port "
@@ -108,10 +116,16 @@ void RxTraceWithAddresses(std::string context, Ptr<const Packet> packet, const A
     CFRTag tag;
     if (packet->PeekPacketTag(tag))
     {
-        //double pathLossDb = tag.GetPathloss();
-        dumpComplexVecToFile(tag.GetComplexes(), "munich_csi_node" + std::to_string(src_nodeId) + ".csv");
+        // dump CSI
+        dumpComplexVecToStream(tag.GetComplexes(), ofs_csi);
+        // dump pathloss
+        double pathLossDb = tag.GetPathloss();
+        ofs_pl << pathLossDb << std::endl;
+        // dump rx node position
+        ofs_tp << Simulator::Now().GetSeconds() << "," << pos.x << "," << pos.y << "," << pos.z << std::endl;
     }
 }
+
 
 int
 main(int argc, char* argv[])
@@ -119,11 +133,11 @@ main(int argc, char* argv[])
     bool verbose = true;
     bool tracing = true;
     bool caching = true;
-    // see https://nvlabs.github.io/sionna/rt/api/scene.html#sionna.rt.scene.munich
-    std::string environment = "munich/munich.xml";
+    std::string environment = "simple_room/simple_room.xml";
     int wifi_channel_num = 42; // center at 5210
-    int app_max_packets = 1;
-    int channelWidth = 80;
+    int app_max_packets = 10;
+    int channel_width = 80;
+    int min_coherence_time_ms = 100; // v=18km/h -> 1ms
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("verbose", "Enable logging", verbose);
@@ -132,12 +146,13 @@ main(int argc, char* argv[])
     cmd.AddValue("environment", "Xml file of environment", environment);
     cmd.AddValue("channel", "The WiFi channel number", wifi_channel_num);
     cmd.AddValue("appMaxPackets", "The maximum number of packets transmitted by app", app_max_packets);
-    cmd.AddValue("channelWidth", "The WiFi channel width in MHz", channelWidth);
+    cmd.AddValue("channelWidth", "The WiFi channel width in MHz", channel_width);
+    cmd.AddValue("minCoherenceTimeMs", "The minimal coherence time in msec", min_coherence_time_ms);
     cmd.Parse(argc, argv);
 
     if (verbose)
     {
-        LogComponentEnable("ExampleMunichSionna", LOG_INFO);
+        LogComponentEnable("ExampleSionnaSensing", LOG_INFO);
         LogComponentEnable("SionnaPropagationDelayModel", LOG_INFO);
         LogComponentEnable("SionnaPropagationLossModel", LOG_INFO);
         LogComponentEnable("SionnaPropagationCache", LOG_INFO);
@@ -149,13 +164,13 @@ main(int argc, char* argv[])
     SionnaHelper sionnaHelper(environment, "tcp://localhost:5555");
 
     // Create nodes
-    NodeContainer wifiStaNodes;
-    wifiStaNodes.Create(1);
+    NodeContainer wifiStaNode;
+    wifiStaNode.Create(1);
 
     NodeContainer wifiApNode;
     wifiApNode.Create(1);
 
-    Config::Set ("/NodeList/*/DeviceList/*/$ns3::WifiNetDevice/Phy/ChannelWidth", UintegerValue (channelWidth));
+    Config::Set ("/NodeList/*/DeviceList/*/$ns3::WifiNetDevice/Phy/ChannelWidth", UintegerValue (channel_width));
 
     Ptr<SionnaPropagationCache> propagationCache = CreateObject<SionnaPropagationCache>();
     propagationCache->SetSionnaHelper(sionnaHelper);
@@ -194,12 +209,12 @@ main(int argc, char* argv[])
     WifiStandard wifi_standard = WIFI_STANDARD_80211ax; // WIFI6
     wifi.SetStandard(wifi_standard);
 
-    std::string channelStr = "{" + std::to_string(wifi_channel_num) + ", " + std::to_string(channelWidth) + ", BAND_5GHZ, 0}";
+    std::string channelStr = "{" + std::to_string(wifi_channel_num) + ", " + std::to_string(channel_width) + ", BAND_5GHZ, 0}";
 
     NetDeviceContainer staDevices;
     mac.SetType("ns3::StaWifiMac", "Ssid", SsidValue(ssid), "ActiveProbing", BooleanValue(false));
     spectrumPhy.Set("ChannelSettings", StringValue(channelStr));
-    staDevices = wifi.Install(spectrumPhy, mac, wifiStaNodes);
+    staDevices = wifi.Install(spectrumPhy, mac, wifiStaNode);
 
     NetDeviceContainer apDevices;
     mac.SetType("ns3::ApWifiMac", "Ssid", SsidValue(ssid), "BeaconGeneration", BooleanValue(true),
@@ -207,20 +222,32 @@ main(int argc, char* argv[])
     spectrumPhy.Set("ChannelSettings", StringValue(channelStr));
     apDevices = wifi.Install(spectrumPhy, mac, wifiApNode);
 
-    // Mobility configuration: fixed nodes
+    // Mobility configuration
     MobilityHelper mobility;
-
+    // static AP
     mobility.SetMobilityModel("ns3::SionnaMobilityModel");
-    mobility.Install(wifiStaNodes);
     mobility.Install(wifiApNode);
+    // mobile STA
+    mobility.SetMobilityModel("ns3::SionnaMobilityModel",
+                              "Model",
+                              EnumValue(SionnaMobilityModel::MODEL_RANDOM_WALK),
+                              "Speed",
+                              StringValue("ns3::ConstantRandomVariable[Constant=1.0]"),
+                              "Distance",
+                              DoubleValue(6));
+    mobility.Install(wifiStaNode);
 
-    wifiStaNodes.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(45.0, 90.0, 1.5));
-    wifiApNode.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(8.5, 21.0, 27.0));
+    auto staMobility = wifiStaNode.Get(0)->GetObject<SionnaMobilityModel>();
+    auto apMobility = wifiApNode.Get(0)->GetObject<SionnaMobilityModel>();
+
+    // init position
+    staMobility->SetPosition(Vector(4.0, 2.0, 1.0));
+    apMobility->SetPosition(Vector(1.0, 2.0, 1.0));
 
     // Set up Internet stack and assign IP addresses
     InternetStackHelper stack;
     stack.Install(wifiApNode);
-    stack.Install(wifiStaNodes);
+    stack.Install(wifiStaNode);
 
     Ipv4AddressHelper address;
 
@@ -228,7 +255,9 @@ main(int argc, char* argv[])
     Ipv4InterfaceContainer wifiStaInterfaces = address.Assign(staDevices);
     Ipv4InterfaceContainer wifiApInterfaces = address.Assign(apDevices);
 
-    BuildIpToNodeIdMap();
+    BuildIpToNodeIdMap();  // Build once here
+
+
 
     // Set up applications
     UdpEchoServerHelper echoServer(9);
@@ -242,34 +271,37 @@ main(int argc, char* argv[])
                     MakeCallback(&RxTraceWithAddresses));
 
     Ipv4Address wifi_ip_addr = wifiApInterfaces.GetAddress(0);
+    //std::cout << "AP IP: " << wifi_ip_addr << std::endl;
 
     UdpEchoClientHelper echoClient(wifi_ip_addr, 9);
     echoClient.SetAttribute("MaxPackets", UintegerValue(app_max_packets));
-    echoClient.SetAttribute("Interval", TimeValue(Seconds(0.1)));
+    echoClient.SetAttribute("Interval", TimeValue(MilliSeconds(50)));
     echoClient.SetAttribute("PacketSize", UintegerValue(1024));
 
-    ApplicationContainer clientApps = echoClient.Install(wifiStaNodes);
+    ApplicationContainer clientApps = echoClient.Install(wifiStaNode);
     clientApps.Start(Seconds(1.0));
-    clientApps.Stop(Seconds(10.0));
+    clientApps.Stop(Seconds(2.0));
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    // set center frequency, bandwidth, FFT for Sionna
+    // set center frequency for Sionna
     double fc = get_center_freq(apDevices.Get(0));
-    sionnaHelper.Configure(fc, channelWidth,
-        getFFTSize(wifi_standard, channelWidth), getSubcarrierSpacing(wifi_standard));
+
+    // set center frequency & bandwidth for Sionna
+    sionnaHelper.Configure(fc, channel_width,
+        getFFTSize(wifi_standard, channel_width), getSubcarrierSpacing(wifi_standard), min_coherence_time_ms);
     sionnaHelper.SetMode(SionnaHelper::MODE_P2P); // compute CSI for P2P only; no look-ahead computation
 
-    if (tracing) // Tracing
+    // Tracing
+    if (tracing)
     {
         std::cout << "Writing pcap files ..." << std::endl;
         spectrumPhy.SetPcapDataLinkType(WifiPhyHelper::DLT_IEEE802_11_RADIO);
-        spectrumPhy.EnablePcap("example-munich-sionna", apDevices.Get(0));
-        spectrumPhy.EnablePcap("example-munich-sionna", staDevices.Get(0));
+        spectrumPhy.EnablePcap("example-sionna-sensing", apDevices.Get(0));
     }
 
     // Simulation end
-    Simulator::Stop(Seconds(2));
+    Simulator::Stop(Seconds(2.1));
 
     sionnaHelper.Start();
 
@@ -278,6 +310,12 @@ main(int argc, char* argv[])
 
     propagationCache->PrintStats();
     sionnaHelper.Destroy();
+
+    ofs_csi.close();
+    ofs_pl.close();
+    ofs_tp.close();
+    std::cout << "CSI results can be found in: " << csiFname << std::endl;
+    std::cout << "For plotting run: python plot3d_mobile_csi.py " << csiFname << " " << plFname << " " << tpFname << std::endl;
 
     return 0;
 }

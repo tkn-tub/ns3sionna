@@ -146,4 +146,11 @@ SionnaMobilityModel::DoGetVelocity() const
     return Vector(0.0, 0.0, 0.0);
 }
 
+/*
+void
+SionnaMobilityModel::SetPropagationCache(Ptr<SionnaPropagationCache> propagationCache)
+{
+    m_propagationCache = propagationCache;
+}
+*/
 } // namespace ns3

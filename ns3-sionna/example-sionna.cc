@@ -29,18 +29,13 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("ExampleSionna");
 
-double get_center_freq(Ptr<NetDevice> nd)
-{
-    Ptr<WifiPhy> wp = nd->GetObject<WifiNetDevice>()->GetPhy();
-    return wp->GetObject<YansWifiPhy>()->GetFrequency() * 1e6;
+void RxTraceWithAddresses(std::string context, Ptr<const Packet> packet, const Address &from, const Address &to) {
+    std::cout << "*** " << Simulator::Now().GetSeconds() << "s [" << context
+    << "]: Server received packet of " << packet->GetSize() << " bytes"
+    << " from: " << InetSocketAddress::ConvertFrom(from).GetIpv4() << " port "
+    << " to: " << InetSocketAddress::ConvertFrom(to).GetIpv4() << " port "
+    << InetSocketAddress::ConvertFrom(to).GetPort() << std::endl;
 }
-
-double get_channel_width(Ptr<NetDevice> nd)
-{
-    Ptr<WifiPhy> wp = nd->GetObject<WifiNetDevice>()->GetPhy();
-    return wp->GetObject<YansWifiPhy>()->GetChannelWidth() * 1e6;
-}
-
 
 int
 main(int argc, char* argv[])
@@ -150,7 +145,7 @@ main(int argc, char* argv[])
     serverApps.Stop(Seconds(10.0));
 
     UdpEchoClientHelper echoClient(wifiApInterfaces.GetAddress(0), 9);
-    echoClient.SetAttribute("MaxPackets", UintegerValue(2));
+    echoClient.SetAttribute("MaxPackets", UintegerValue(3));
     echoClient.SetAttribute("Interval", TimeValue(Seconds(1.0)));
     echoClient.SetAttribute("PacketSize", UintegerValue(1024));
 
@@ -161,7 +156,9 @@ main(int argc, char* argv[])
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
     // set center frequency & bandwidth for Sionna
-    sionnaHelper.Configure(get_center_freq(apDevices.Get(0)), get_channel_width(apDevices.Get(0)));
+    double channelWidth = get_channel_width(apDevices.Get(0));
+    sionnaHelper.Configure(get_center_freq(apDevices.Get(0)),
+        channelWidth, getFFTSize(wifi_standard, channelWidth), getSubcarrierSpacing(wifi_standard));
 
     // Tracing
     if (tracing)
@@ -208,6 +205,9 @@ main(int argc, char* argv[])
             }
         }
     }
+
+    Config::Connect("/NodeList/*/ApplicationList/*/$ns3::UdpEchoServer/RxWithAddresses",
+                    MakeCallback(&RxTraceWithAddresses));
 
     // Simulation
     Simulator::Stop(Seconds(5.0));

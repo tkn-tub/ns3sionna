@@ -8,11 +8,13 @@ package ns3sionna;
 message SimInitMessage {
     string scene_fname = 1; // the scene to be loaded
     int32 seed = 2; // random seed
-    double frequency = 3; // the center frequency in Hz
-    double channel_bw = 4; // OFDM channel bandiwdth
-    int32 fft_size = 5; // size of FFT
-    int32 mode = 6; // mode of operation: 1=P2P, 2=P2MP, 3=P2MP+lookahead
-    int32 sub_mode = 7; // used in mode=3: max. no of parallel links to be computed in single call to Sionna
+    uint32 frequency = 3; // the center frequency in MHz
+    uint32 channel_bw = 4; // OFDM channel bandwidth in MHz
+    uint32 fft_size = 5; // size of FFT
+    uint32 subcarrier_spacing = 6; // OFDM subcarrier spacing in Hz
+    uint32 mode = 7; // mode of operation: 1=P2P, 2=P2MP, 3=P2MP+lookahead
+    uint32 sub_mode = 8; // used in mode=3: max. no of parallel links to be computed in single call to Sionna
+    uint32 min_coherence_time_ms = 9; // minimal coherence time in milliseconds
 
     // each node is defined by ID, location and mobility model
     message NodeInfo {
@@ -72,7 +74,7 @@ message SimInitMessage {
         }
     }
 
-    repeated NodeInfo nodes = 8;
+    repeated NodeInfo nodes = 10;
 }
 
 // sent my Sioanna to confirm reception of SimInitMessage or CloseRequest
@@ -84,14 +86,14 @@ message ChannelStateRequest {
     // get channel between tx_node and at least rx_node at sim time
     uint32 tx_node = 1; // TX node ID
     uint32 rx_node = 2; // RX node ID
-    int64 time = 3; // simulation time (in ns)
+    uint64 time = 3; // simulation time (in ns)
 }
 
 message ChannelStateResponse {
     message ChannelState {
         // validity of this data
-        int64 start_time = 1; // simulation time (in ns)
-        int64 end_time = 2; // simulation time (in ns)
+        uint64 start_time = 1; // simulation time (in ns)
+        uint64 end_time = 2; // simulation time (in ns)
 
         // info for the tx node
         message TxNodeInfo {
@@ -118,12 +120,14 @@ message ChannelStateResponse {
 
             Vector position = 2;
 
-            int64 delay = 3; // propagation delay of shortest path (in ns)
+            uint64 delay = 3; // propagation delay of shortest path (in ns)
             double wb_loss = 4; // wideband propgation loss (in dB)
 
+            // OFDM subcarrier frequencies relative to fc0
+            repeated int32 frequencies = 5;
             // complex CSI per OFDM subcarrier
-            repeated double csi_real = 5;
-            repeated double csi_imag = 6;
+            repeated double csi_real = 6;
+            repeated double csi_imag = 7;
         }
 
         TxNodeInfo tx_node = 3;

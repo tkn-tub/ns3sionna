@@ -17,6 +17,13 @@
 namespace ns3
 {
 
+/**
+ * The mobility models available in ns3sionna:
+ * - constant position
+ * - random walk
+ *
+ * Note: mobility is simulated inside Sionna and propagated back no ns3.
+ */
 class SionnaMobilityModel : public MobilityModel
 {
     public:
@@ -49,6 +56,8 @@ class SionnaMobilityModel : public MobilityModel
 
         Ptr<RandomVariableStream> GetDirection() const;
 
+        //void SetPropagationCache(Ptr<SionnaPropagationCache> propagationCache);
+
     private:
         Vector DoGetPosition() const override;
 
@@ -64,6 +73,7 @@ class SionnaMobilityModel : public MobilityModel
         Ptr<RandomVariableStream> m_speed;
         Ptr<RandomVariableStream> m_direction;
 
+        //Ptr<SionnaPropagationCache> m_propagationCache;
 };
 
 } // namespace ns3

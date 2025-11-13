@@ -25,7 +25,7 @@ NS_LOG_COMPONENT_DEFINE("PerformanceNs3");
 double get_center_freq(Ptr<NetDevice> nd)
 {
     Ptr<WifiPhy> wp = nd->GetObject<WifiNetDevice>()->GetPhy();
-    return wp->GetObject<YansWifiPhy>()->GetFrequency() * 1e6;
+    return wp->GetObject<YansWifiPhy>()->GetFrequency();
 }
 
 double

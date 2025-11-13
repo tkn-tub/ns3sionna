@@ -9,6 +9,7 @@ import message_pb2
 import os
 
 from commons import *
+from sionna_utils import compute_coherence_time
 
 gpu_num = 0 # Use "" to use the CPU
 os.environ["CUDA_VISIBLE_DEVICES"] = f"{gpu_num}"
@@ -80,6 +81,8 @@ class SionnaEnv:
             # use value set by sionna
             self.sub_mode = self.rt_max_parallel_links
 
+        print(f'Operating in mode: {self.mode}, sub_mode: {self.sub_mode}')
+
         # Load the mitsuba scene used by the mobility model
         # Mobility model uses mitsuba SCALAR variant
         mi.set_variant('scalar_rgb')
@@ -105,11 +108,17 @@ class SionnaEnv:
                                      vertical_spacing=0.5,
                                      horizontal_spacing=0.5,
                                      pattern=iso_pattern)
+        print(f'Scenario: {simulation_info.scene_fname}')
+        print(f'Params: F0={simulation_info.frequency}MHz, BW={simulation_info.channel_bw}MHz, '
+              f'FFT={simulation_info.fft_size}, df={simulation_info.subcarrier_spacing}Hz, '
+              f'minTc={simulation_info.min_coherence_time_ms}ms')
 
         # Set scene parameters
-        self.scene.frequency = simulation_info.frequency
-        self.scene.channel_bw = simulation_info.channel_bw
-        self.scene.fft_size = simulation_info.fft_size
+        self.scene.frequency = simulation_info.frequency * 1e6
+        self.scene.channel_bw = simulation_info.channel_bw * 1e6 # max channel bandwidth
+        self.scene.fft_size = simulation_info.fft_size  # max FFT size
+        self.scene.min_coherence_time_ms = simulation_info.min_coherence_time_ms # min Tc
+        self.scene.subcarrier_spacing = simulation_info.subcarrier_spacing # in Hz
 
         # If set to False, ray tracing will be done per antenna element (slower for large arrays)
         self.scene.synthetic_array = True
@@ -188,7 +197,12 @@ class SionnaEnv:
         for rx_node in list(self.node_info_dict.keys()):
             max_v = max(max_v, self.node_info_dict[rx_node]["speed"][1])
 
-        self.chan_coh_time_mode23 = int(9 * 299792458 * 1e9 / (16 * np.pi * 2 * max_v * self.scene.frequency.numpy()))
+        # coherence time in nanoseconds
+        #self.chan_coh_time_mode23 = int(9 * 299792458 * 1e9 / (16 * np.pi * 2 * max_v * self.scene.frequency.numpy()))
+        self.chan_coh_time_mode23 = compute_coherence_time(max_v, self.scene.frequency.numpy(), model='rappaport2')
+        # consider minimum coherence time which is given in ms
+        self.chan_coh_time_mode23 = min(self.chan_coh_time_mode23, self.scene.min_coherence_time_ms * 1e6)
+
         if self.mode == 3 or self.mode == 2:
             # worst case coherence time
             print("Running mode %d with Tc=%.2f ms" % (self.mode, self.chan_coh_time_mode23 / 1e6))
@@ -206,7 +220,7 @@ class SionnaEnv:
 
         tx_node = channel_state_request.tx_node
         mand_rx_node = channel_state_request.rx_node # this rx node must be included in result set
-        simulation_time = channel_state_request.time
+        simulation_time = channel_state_request.time # in nanoseconds
 
         # remove all entries from cache
         self.remove_all_cached_entries(simulation_time)
@@ -296,10 +310,9 @@ class SionnaEnv:
             for tmp in add_to_cache[node_id]:
                 self.pos_velo_cache[node_id].append(tmp)
 
-
         # WiFi parameters
-        subcarrier_spacing = (self.scene.channel_bw / self.scene.fft_size)  # 312.5e3
-        fft_size = self.scene.fft_size  # 64
+        subcarrier_spacing = self.scene.subcarrier_spacing #(self.scene.channel_bw / self.scene.fft_size)
+        fft_size = self.scene.fft_size
 
         a, tau = 0, 0
         a_tau_set = False
@@ -357,10 +370,11 @@ class SionnaEnv:
                                              subcarrier_spacing=subcarrier_spacing)
 
         # Compute the frequency response of the channel at frequencies
-        h_freq = cir_to_ofdm_channel(frequencies=frequencies,
-                                     a=a,
-                                     tau=tau,
-                                     normalize=False)
+        # tensor: [batch size, num_rx, num_rx_ant, num_tx, num_tx_ant, num_time_steps, fft_size]
+        # absolute
+        h_freq_raw = cir_to_ofdm_channel(frequencies=frequencies, a=a, tau=tau, normalize=False)
+        # norm
+        h_freq = cir_to_ofdm_channel(frequencies=frequencies, a=a, tau=tau, normalize=True)
 
         # ZMQ response
         chan_response = reply_wrapper.channel_state_response
@@ -382,6 +396,7 @@ class SionnaEnv:
                 # compute the index for the rx nodes into tensor
                 tf_index = future_id * len(all_rx_nodes) + lnk_id
 
+                lnk_h_freq_raw = h_freq_raw.numpy()[:, tf_index, :, future_id, :, :, :]
                 lnk_h_freq = h_freq.numpy()[:, tf_index, :, future_id, :, :, :]
                 lnk_tau = tau.numpy()[:, tf_index, future_id, :]
 
@@ -389,7 +404,7 @@ class SionnaEnv:
                 lnk_delay = int(round(np.min(lnk_tau[lnk_tau >= 0] * 1e9), 0))
 
                 # see Parseval's theorem
-                lnk_loss = float(-10 * np.log10(tf.reduce_mean(tf.abs(lnk_h_freq) ** 2).numpy()))
+                lnk_loss = float(-10 * np.log10(tf.reduce_mean(tf.abs(lnk_h_freq_raw) ** 2).numpy()))
 
                 # the channel frequency response (CFR)
                 lnk_csi = lnk_h_freq.flatten()
@@ -429,6 +444,10 @@ class SionnaEnv:
                 rx_node_info.wb_loss = lnk_loss
 
                 if self.est_csi:
+                    # avoid rounding errors
+                    frequencies = np.arange(-fft_size / 2, fft_size / 2, dtype=int) * subcarrier_spacing
+                    rx_node_info.frequencies.extend(frequencies.tolist())
+                    #rx_node_info.frequencies.extend(list(frequencies.numpy().astype(int)))
                     rx_node_info.csi_imag.extend(list(np.imag(lnk_csi)))
                     rx_node_info.csi_real.extend(list(np.real(lnk_csi)))
 
@@ -672,7 +691,7 @@ if __name__ == '__main__':
     parser.add_argument("--verbose", help="Whether to run in verbose mode", action='store_true')
     args = parser.parse_args()
 
-    print("ns3sionna v0.2")
+    print("ns3sionna v0.3")
     while True:
         print("Using config: rt_calc_diffraction=%s, rt_max_depth=%s, rt_max_parallel_links=%d, est_csi=%r" % (args.rt_calc_diffraction, args.rt_max_depth, args.rt_max_parallel_links, args.est_csi))
         print("Waiting for new job ...")

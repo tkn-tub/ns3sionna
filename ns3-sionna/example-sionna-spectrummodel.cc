@@ -14,9 +14,12 @@
 #include "lib/sionna-propagation-loss-model.h"
 
 // Ns-3 modules
-#include "../../src/wifi/model/spectrum-wifi-phy.h"
-#include "../../src/wifi/model/wifi-spectrum-phy-interface.h"
+#include <ns3/spectrum-wifi-phy.h>
+#include <ns3/wifi-spectrum-phy-interface.h>
 
+#include "lib/sionna-phased-array-spectrum-propagation-loss-model.h"
+#include "lib/sionna-spectrum-propagation-loss-model.h"
+#include "lib/cfr-tag.h"
 #include "ns3/applications-module.h"
 #include "ns3/core-module.h"
 #include "ns3/internet-module.h"
@@ -26,19 +29,132 @@
 #include "ns3/spectrum-wifi-helper.h"
 #include "ns3/ssid.h"
 #include "ns3/wifi-net-device.h"
+#include "ns3/wifi-mac-header.h"
 #include "ns3/yans-wifi-helper.h"
 #include <ns3/spectrum-analyzer-helper.h>
 #include <ns3/spectrum-analyzer.h>
-#include <ns3/spectrum-model-ism2400MHz-res1MHz.h>
+#include "ns3/spectrum-module.h"
+#include "ns3/wifi-psdu.h"  // For WifiPsdu
 
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("ExampleSionnaSpectrumModel");
 
-double get_center_freq(Ptr<NetDevice> nd)
+std::map<Ipv4Address, uint32_t> g_ipToNodeIdMap;  // Global map
+
+void BuildIpToNodeIdMap ()
 {
-    Ptr<WifiPhy> wp = nd->GetObject<WifiNetDevice>()->GetPhy();
-    return wp->GetObject<SpectrumWifiPhy>()->GetCurrentInterface()->GetCenterFrequency() * 1e6;
+    g_ipToNodeIdMap.clear ();
+    for (uint32_t i = 0; i < NodeList::GetNNodes (); ++i)
+    {
+        Ptr<Node> node = NodeList::GetNode (i);
+        Ptr<Ipv4> ipv4 = node->GetObject<Ipv4> ();
+        if (ipv4)
+        {
+            uint32_t nInterfaces = ipv4->GetNInterfaces ();
+            for (uint32_t j = 0; j < nInterfaces; ++j)
+            {
+                uint32_t nAddrs = ipv4->GetNAddresses (j);
+                for (uint32_t k = 0; k < nAddrs; ++k)
+                {
+                    Ipv4Address addr = ipv4->GetAddress (j, k).GetLocal ();
+                    g_ipToNodeIdMap[addr] = node->GetId ();  // Insert (overwrites if duplicate)
+                }
+            }
+        }
+    }
+    NS_LOG_INFO ("Built IP-to-NodeID map with " << g_ipToNodeIdMap.size () << " entries");
+}
+
+Ptr<const WifiPsdu>
+CreatePsduFromPacket (Ptr<const Packet> packet)
+{
+    WifiMacHeader hdr;
+    if (!packet->PeekHeader (hdr)) {
+        NS_LOG_WARN ("Cannot create PSDU: No WifiMacHeader.");
+        return nullptr;
+    }
+
+    // Copy payload after header (or use full packet if header is already included)
+    uint32_t headerSize = hdr.GetSerializedSize ();
+    Ptr<Packet> payload = packet->CreateFragment (headerSize, packet->GetSize () - headerSize);
+    // If header was peeked but not removed, adjust: payload = packet->Copy(); payload->RemoveHeader(hdr);
+
+    // Construct new PSDU (const version via Ptr<const>)
+    Ptr<WifiPsdu> psdu = Create<WifiPsdu> (payload, hdr);
+    return psdu;  // Implicit upcast to const
+}
+
+// Fast lookup function
+uint32_t GetNodeIdFromIpv4Address (Ipv4Address targetAddr)
+{
+    auto it = g_ipToNodeIdMap.find (targetAddr);
+    if (it != g_ipToNodeIdMap.end ())
+    {
+        return it->second;
+    }
+    NS_LOG_WARN ("No node found for IPv4 address " << targetAddr);
+    return 0xFFFFFFFF;
+}
+
+void RxTraceWithAddresses(std::string context, Ptr<const Packet> packet, const Address &from, const Address &to) {
+
+    // Later lookups are O(1)
+    uint32_t src_nodeId = GetNodeIdFromIpv4Address(InetSocketAddress::ConvertFrom(from).GetIpv4());
+
+    std::cout << "*** " << Simulator::Now().GetSeconds() << "s [" << context
+    << "]: Server received packet of " << packet->GetSize() << " bytes"
+    << " from: " << InetSocketAddress::ConvertFrom(from).GetIpv4() << "(" << src_nodeId << ") port "
+    << " to: " << InetSocketAddress::ConvertFrom(to).GetIpv4() << "(/) port "
+    << InetSocketAddress::ConvertFrom(to).GetPort() << std::endl;
+
+    CFRTag tag;
+    if (packet->PeekPacketTag(tag))
+    {
+        std::cout << "DRIN" << std::endl;
+        tag.Print(std::cout);
+        dumpComplexVecToFile(tag.GetComplexes(), "csi_node" + std::to_string(src_nodeId) + ".csv");
+    }
+    std::cout << "***" << std::endl;
+}
+
+void
+PhyRxOkTraceAtAP(std::string context,
+             Ptr<const Packet> p,
+             double snr,
+             WifiMode mode,
+             WifiPreamble preamble)
+{
+    double snrDb = 10 * std::log10(snr);
+
+    Ptr<const WifiPsdu> psdu = CreatePsduFromPacket (p);
+    uint32_t node_id = ContextToNodeId (context);
+
+    std::cout << "PHY-RX-OK time=" << Simulator::Now().As(Time::S) << " node="
+                              << node_id << " size=" << p->GetSize()
+                              << " snr=" << snrDb << "db, mode=" << mode
+                              << " preamble=" << preamble << std::endl;
+
+    if (psdu) {
+        CFRTag tag;
+        if (psdu->GetPayload(0)->PeekPacketTag(tag)) {
+            NS_LOG_UNCOND("Received PPDU tag");
+        } else {
+            NS_LOG_UNCOND("No PPDU tag found");
+        }
+
+        // Now use PSDU methods
+        const WifiMacHeader& fullHdr = psdu->GetHeader (0);
+        std::cout << "PSDU A1: " << fullHdr.GetAddr1() << ", A2: " << fullHdr.GetAddr2()
+            << ", A3: " << fullHdr.GetAddr3() << std::endl;
+
+        if (preamble == WifiPreamble::WIFI_PREAMBLE_HE_SU)
+        {
+            std::cout << "HE SU RX" << std::endl;
+        }
+        //Ptr<const Packet> innerPayload = psdu->GetPayload ();
+        // ... process
+    }
 }
 
 int
@@ -48,8 +164,8 @@ main(int argc, char* argv[])
     bool tracing = true;
     bool caching = true;
     std::string environment = "simple_room/simple_room.xml";
-    int wifi_channel_num = 46;
-    int channelWidth = 40;
+    int wifi_channel_num = 42; // center at 5210
+    int channelWidth = 80;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("verbose", "Enable logging", verbose);
@@ -68,9 +184,10 @@ main(int argc, char* argv[])
         LogComponentEnable("YansWifiChannel", LOG_PREFIX_TIME);
         LogComponentEnable("SionnaPropagationDelayModel", LOG_INFO);
         LogComponentEnable("SionnaPropagationCache", LOG_INFO);
+        LogComponentEnable("SionnaSpectrumPropagationLossModel", LOG_INFO);
     }
 
-    std::cout << "Example scenario with sionna" << std::endl << std::endl;
+    std::cout << "Example spectrum model wifi scenario with sionna" << std::endl << std::endl;
 
     SionnaHelper sionnaHelper(environment, "tcp://localhost:5555");
 
@@ -96,6 +213,20 @@ main(int argc, char* argv[])
 
     spectrumChannel->AddPropagationLossModel(lossModel);
 
+    // for MIMO
+    //Ptr<SionnaPhasedArraySpectrumPropagationLossModel> spectrumLossModel = CreateObject<SionnaPhasedArraySpectrumPropagationLossModel>();
+    //spectrumLossModel->SetPropagationCache(propagationCache);
+
+    //spectrumChannel->AddPhasedArraySpectrumPropagationLossModel(spectrumLossModel);
+    // end MIMO
+
+    // for SISO
+    Ptr<SionnaSpectrumPropagationLossModel> spectrumLossModel = CreateObject<SionnaSpectrumPropagationLossModel>();
+    spectrumLossModel->SetPropagationCache(propagationCache);
+
+    spectrumChannel->AddSpectrumPropagationLossModel(spectrumLossModel);
+    // end SISO
+
     Ptr<SionnaPropagationDelayModel> delayModel = CreateObject<SionnaPropagationDelayModel>();
     delayModel->SetPropagationCache(propagationCache);
     spectrumChannel->SetPropagationDelayModel(delayModel);
@@ -103,15 +234,15 @@ main(int argc, char* argv[])
     SpectrumWifiPhyHelper spectrumPhy;
     spectrumPhy.SetChannel(spectrumChannel);
     spectrumPhy.SetErrorRateModel("ns3::NistErrorRateModel");
-    spectrumPhy.Set("TxPowerStart", DoubleValue(1));
-    spectrumPhy.Set("TxPowerEnd", DoubleValue(1));
+    spectrumPhy.Set("TxPowerStart", DoubleValue(20));
+    spectrumPhy.Set("TxPowerEnd", DoubleValue(20));
 
     WifiMacHelper mac;
     Ssid ssid = Ssid("ns-3-ssid");
 
     WifiHelper wifi;
 
-    WifiStandard wifi_standard = WIFI_STANDARD_80211ac;
+    WifiStandard wifi_standard = WIFI_STANDARD_80211ax; // AZu: ac/VHT has incorrect tone plan
     wifi.SetStandard(wifi_standard);
 
     std::string channelStr = "{" + std::to_string(wifi_channel_num) + ", " + std::to_string(channelWidth) + ", BAND_5GHZ, 0}";
@@ -133,8 +264,8 @@ main(int argc, char* argv[])
     mobility.Install(wifiStaNodes);
     mobility.Install(wifiApNode);
 
-    wifiStaNodes.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(5.0, 2.05, 1.0));
-    wifiStaNodes.Get(1)->GetObject<MobilityModel>()->SetPosition(Vector(5.0, 1.95, 1.0));
+    wifiStaNodes.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(5.0, 2.0, 1.0));
+    wifiStaNodes.Get(1)->GetObject<MobilityModel>()->SetPosition(Vector(2.0, 3.0, 1.0));
     wifiApNode.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(1.0, 2.0, 1.0));
 
     // Set up Internet stack and assign IP addresses
@@ -148,6 +279,8 @@ main(int argc, char* argv[])
     Ipv4InterfaceContainer wifiStaInterfaces = address.Assign(staDevices);
     Ipv4InterfaceContainer wifiApInterfaces = address.Assign(apDevices);
 
+    BuildIpToNodeIdMap();  // Build once here
+
     // Set up applications
     UdpEchoServerHelper echoServer(9);
 
@@ -155,23 +288,30 @@ main(int argc, char* argv[])
     serverApps.Start(Seconds(1.0));
     serverApps.Stop(Seconds(10.0));
 
+    // Trace PHY Rx success events
+    Config::Connect("/NodeList/2/DeviceList/*/$ns3::WifiNetDevice/Phy/$ns3::WifiPhy/State/RxOk",
+                    MakeCallback(&PhyRxOkTraceAtAP));
+
+    // App layer tracing of RX events
+    Config::Connect("/NodeList/*/ApplicationList/*/$ns3::UdpEchoServer/RxWithAddresses",
+                    MakeCallback(&RxTraceWithAddresses));
+
     UdpEchoClientHelper echoClient(wifiApInterfaces.GetAddress(0), 9);
-    echoClient.SetAttribute("MaxPackets", UintegerValue(100));
-    echoClient.SetAttribute("Interval", TimeValue(Seconds(1.0)));
+    echoClient.SetAttribute("MaxPackets", UintegerValue(1000));
+    echoClient.SetAttribute("Interval", TimeValue(Seconds(0.1)));
     echoClient.SetAttribute("PacketSize", UintegerValue(1024));
 
     ApplicationContainer clientApps = echoClient.Install(wifiStaNodes);
-    clientApps.Start(Seconds(2.0));
-    clientApps.Stop(Seconds(10.0));
+    clientApps.Start(Seconds(0.1));
+    clientApps.Stop(Seconds(2.0));
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
     // set center frequency for Sionna
     double fc = get_center_freq(apDevices.Get(0));
-    std::cout << "fc: " << fc << std::endl;
 
     // set center frequency & bandwidth for Sionna
-    sionnaHelper.Configure(fc, channelWidth * 1e6);
+    sionnaHelper.Configure(fc, channelWidth, getFFTSize(wifi_standard, channelWidth), getSubcarrierSpacing(wifi_standard));
 
     // Tracing
     if (tracing)
@@ -185,11 +325,11 @@ main(int argc, char* argv[])
     if (verbose)
     {
         // Print node information
-        std::cout << "----------Node Information----------" << std::endl;
+        std::cout << "ns3sionna: mobility configuration" << std::endl;
         NodeContainer c = NodeContainer::GetGlobal();
         for (auto iter = c.Begin(); iter != c.End(); ++iter)
         {
-            std::cout << "NodeID: " << (*iter)->GetId() << ", ";
+            std::cout << "\t nodeID: " << (*iter)->GetId() << ", ";
 
             Ptr<MobilityModel> mobilityModel = (*iter)->GetObject<MobilityModel>();
             if (mobilityModel)
@@ -197,18 +337,18 @@ main(int argc, char* argv[])
                 std::cout << mobilityModel->GetInstanceTypeId().GetName() << " (";
                 Vector position = mobilityModel->GetPosition();
                 Vector velocity = mobilityModel->GetVelocity();
-                std::cout << "Pos: [" << position.x << ", " << position.y << ", " << position.z << "]" << ", ";
-                std::cout << "Vel: [" << velocity.x << ", " << velocity.y << ", " << velocity.z << "]";
+                std::cout << "pos: [" << position.x << ", " << position.y << ", " << position.z << "]" << ", ";
+                std::cout << "vel: [" << velocity.x << ", " << velocity.y << ", " << velocity.z << "]";
                 
                 Ptr<SionnaMobilityModel> sionnaMobilityModel = DynamicCast<SionnaMobilityModel>(mobilityModel);
                 if (sionnaMobilityModel)
                 {
-                    std::cout << ", " << "Model: " << sionnaMobilityModel->GetModel() << ", ";
-                    std::cout << "Mode: " << sionnaMobilityModel->GetMode() << ", ";
-                    std::cout << "ModeTime: " << sionnaMobilityModel->GetModeTime().GetSeconds() << ", ";
-                    std::cout << "ModeDistance: " << sionnaMobilityModel->GetModeDistance() << ", ";
-                    std::cout << "Speed: " << sionnaMobilityModel->GetSpeed()->GetInstanceTypeId().GetName() << ", ";
-                    std::cout << "Direction: " << sionnaMobilityModel->GetDirection()->GetInstanceTypeId().GetName();
+                    std::cout << ", " << "model: " << sionnaMobilityModel->GetModel() << ", ";
+                    std::cout << "mode: " << sionnaMobilityModel->GetMode() << ", ";
+                    std::cout << "modetime: " << sionnaMobilityModel->GetModeTime().GetSeconds() << ", ";
+                    std::cout << "modefistance: " << sionnaMobilityModel->GetModeDistance() << ", ";
+                    std::cout << "speed: " << sionnaMobilityModel->GetSpeed()->GetInstanceTypeId().GetName() << ", ";
+                    std::cout << "direction: " << sionnaMobilityModel->GetDirection()->GetInstanceTypeId().GetName();
                 }
                 std::cout << ")" << std::endl;
             }
@@ -219,19 +359,29 @@ main(int argc, char* argv[])
         }
     }
 
+    /*
+    std::vector<double> freqs;
+    freqs.reserve(512);
+    for (int i = -256; i < 256; ++i)
+    {
+        freqs.push_back(i*78125 + 5210 * 1e6);
+    }
+    Ptr<SpectrumModel> rx_spec_model = Create<SpectrumModel>(freqs);
+
     SpectrumAnalyzerHelper spectrumAnalyzerHelper;
     spectrumAnalyzerHelper.SetChannel(spectrumChannel);
-    spectrumAnalyzerHelper.SetRxSpectrumModel(SpectrumModelIsm2400MhzRes1Mhz);
-    spectrumAnalyzerHelper.SetPhyAttribute("Resolution", TimeValue(MilliSeconds(2)));
+
+    spectrumAnalyzerHelper.SetRxSpectrumModel(rx_spec_model);
+    spectrumAnalyzerHelper.SetPhyAttribute("Resolution", TimeValue(MicroSeconds(100)));
     spectrumAnalyzerHelper.SetPhyAttribute("NoisePowerSpectralDensity",
-                                           DoubleValue(1e-15)); // -120 dBm/Hz
+                                           DoubleValue(1e-20)); // -120 dBm/Hz
     spectrumAnalyzerHelper.EnableAsciiAll("spectrum-analyzer-output");
     NetDeviceContainer spectrumAnalyzerDevices =
         spectrumAnalyzerHelper.Install(wifiApNode);
-
+    */
 
     // Simulation
-    Simulator::Stop(Seconds(10.0));
+    Simulator::Stop(Seconds(2));
 
     sionnaHelper.Start();
 

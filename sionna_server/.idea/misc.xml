@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.10 (sionna)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 virtualenv at ~/Projects/ns-sionna-dev/ns3-sionna/sionna_server/sionna-venv" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (sionna_server) (2)" project-jdk-type="Python SDK" />
 </project>

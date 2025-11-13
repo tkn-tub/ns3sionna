@@ -27,7 +27,7 @@
 
 
 /**
- * Outdoor (munich) example showing the use of MultiModelSpectrumChannel with ns3sionna.
+ * Simple example showing the use of MultiModelSpectrumChannel with ns3sionna.
  * Scenario: single AP with two connected STAs operating on 80 MHz channel in room scenario.
  * All WiFi nodes are static and each STA sends a single packet from which the CSI is retrieved
  * and stored in a file.
@@ -35,13 +35,12 @@
  *
  * Limitations: only SISO so far
  *
- * ./ns3 run scratch/ns3-sionna/example-munich-sionna
- * python3 ./scratch/ns3-sionna/plot_csi.py munich_csi_node0.csv
+ * To run: ./example-sionna-sensing.sh
  */
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("ExampleMunichSionna");
+NS_LOG_COMPONENT_DEFINE("ExampleSionnaSensing");
 
 // mapping of IPv4 addr to nodeIds
 std::map<Ipv4Address, uint32_t> g_ipToNodeIdMap;
@@ -109,7 +108,7 @@ void RxTraceWithAddresses(std::string context, Ptr<const Packet> packet, const A
     if (packet->PeekPacketTag(tag))
     {
         //double pathLossDb = tag.GetPathloss();
-        dumpComplexVecToFile(tag.GetComplexes(), "munich_csi_node" + std::to_string(src_nodeId) + ".csv");
+        dumpComplexVecToFile(tag.GetComplexes(), "csi_node" + std::to_string(src_nodeId) + ".csv");
     }
 }
 
@@ -119,8 +118,8 @@ main(int argc, char* argv[])
     bool verbose = true;
     bool tracing = true;
     bool caching = true;
-    // see https://nvlabs.github.io/sionna/rt/api/scene.html#sionna.rt.scene.munich
-    std::string environment = "munich/munich.xml";
+    //std::string environment = "simple_room/simple_room.xml";
+    std::string environment = "2_rooms_with_door/2_rooms_with_door_open.xml";
     int wifi_channel_num = 42; // center at 5210
     int app_max_packets = 1;
     int channelWidth = 80;
@@ -137,7 +136,7 @@ main(int argc, char* argv[])
 
     if (verbose)
     {
-        LogComponentEnable("ExampleMunichSionna", LOG_INFO);
+        LogComponentEnable("ExampleSionnaSensing", LOG_INFO);
         LogComponentEnable("SionnaPropagationDelayModel", LOG_INFO);
         LogComponentEnable("SionnaPropagationLossModel", LOG_INFO);
         LogComponentEnable("SionnaPropagationCache", LOG_INFO);
@@ -150,7 +149,7 @@ main(int argc, char* argv[])
 
     // Create nodes
     NodeContainer wifiStaNodes;
-    wifiStaNodes.Create(1);
+    wifiStaNodes.Create(2);
 
     NodeContainer wifiApNode;
     wifiApNode.Create(1);
@@ -214,8 +213,9 @@ main(int argc, char* argv[])
     mobility.Install(wifiStaNodes);
     mobility.Install(wifiApNode);
 
-    wifiStaNodes.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(45.0, 90.0, 1.5));
-    wifiApNode.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(8.5, 21.0, 27.0));
+    wifiStaNodes.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(5.0, 2.0, 1.0));
+    wifiStaNodes.Get(1)->GetObject<MobilityModel>()->SetPosition(Vector(2.0, 3.0, 1.0));
+    wifiApNode.Get(0)->GetObject<MobilityModel>()->SetPosition(Vector(1.0, 2.0, 1.0));
 
     // Set up Internet stack and assign IP addresses
     InternetStackHelper stack;
@@ -264,8 +264,9 @@ main(int argc, char* argv[])
     {
         std::cout << "Writing pcap files ..." << std::endl;
         spectrumPhy.SetPcapDataLinkType(WifiPhyHelper::DLT_IEEE802_11_RADIO);
-        spectrumPhy.EnablePcap("example-munich-sionna", apDevices.Get(0));
-        spectrumPhy.EnablePcap("example-munich-sionna", staDevices.Get(0));
+        spectrumPhy.EnablePcap("example-sionna-sensing", apDevices.Get(0));
+        spectrumPhy.EnablePcap("example-sionna-sensing", staDevices.Get(0));
+        spectrumPhy.EnablePcap("example-sionna-sensing", staDevices.Get(1));
     }
 
     // Simulation end

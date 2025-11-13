@@ -29,19 +29,6 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("ExampleSionna");
 
-double get_center_freq(Ptr<NetDevice> nd)
-{
-    Ptr<WifiPhy> wp = nd->GetObject<WifiNetDevice>()->GetPhy();
-    return wp->GetObject<YansWifiPhy>()->GetFrequency() * 1e6;
-}
-
-double get_channel_width(Ptr<NetDevice> nd)
-{
-    Ptr<WifiPhy> wp = nd->GetObject<WifiNetDevice>()->GetPhy();
-    return wp->GetObject<YansWifiPhy>()->GetChannelWidth() * 1e6;
-}
-
-
 int
 main(int argc, char* argv[])
 {
@@ -165,7 +152,9 @@ main(int argc, char* argv[])
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
     // set center frequency & bandwidth for Sionna
-    sionnaHelper.Configure(get_center_freq(apDevices.Get(0)), get_channel_width(apDevices.Get(0)));
+    double channelWidth = get_channel_width(apDevices.Get(0));
+    sionnaHelper.Configure(get_center_freq(apDevices.Get(0)),
+        channelWidth, getFFTSize(wifi_standard, channelWidth), getSubcarrierSpacing(wifi_standard));
 
     // Tracing
     if (tracing)

@@ -15,7 +15,10 @@
 
 namespace ns3
 {
-    
+
+/**
+ * The propagation loss model: we compute the average loss (over all subcarriers) in Sionna
+ */
 class SionnaPropagationLossModel : public PropagationLossModel
 {
     public:
@@ -37,7 +40,6 @@ class SionnaPropagationLossModel : public PropagationLossModel
         int64_t DoAssignStreams(int64_t stream) override;
 
         Ptr<SionnaPropagationCache> m_propagationCache;
-        
 };
 
 } // namespace ns3

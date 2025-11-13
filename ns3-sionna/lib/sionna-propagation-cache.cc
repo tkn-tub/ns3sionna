@@ -14,6 +14,7 @@
 #include "ns3/log.h"
 #include "ns3/node.h"
 #include "ns3/simulator.h"
+#include <boost/units/physical_dimensions/volume.hpp>
 #include <sstream>
 
 namespace ns3
@@ -57,7 +58,7 @@ SionnaPropagationCache::GetPropagationDelay(Ptr<MobilityModel> a, Ptr<MobilityMo
         if (resultdBm + m_optimize_margin < m_sionnaHelper->GetNoiseFloor())
         {
             Time const_delay = m_constSpeedDelayModel->GetDelay(a, b);
-            NS_LOG_INFO("Skipped raytracing for prop delay due to large distance; const delay used: " << const_delay);
+            NS_LOG_DEBUG("Skipped raytracing for prop delay due to large distance; const delay used: " << const_delay);
             return const_delay;
         }
         // signal is too strong and delay need to be computed with ray tracing
@@ -76,18 +77,86 @@ SionnaPropagationCache::GetPropagationLoss(Ptr<MobilityModel> a, Ptr<MobilityMod
         if (resultdBm + m_optimize_margin < m_sionnaHelper->GetNoiseFloor())
         {
             double friis_loss = (-1) * (resultdBm - txPowerDbm);
-            NS_LOG_INFO("Skipped raytracing for prop loss due to large distance; friis loss used: " << friis_loss);
+            NS_LOG_DEBUG("Skipped raytracing for prop loss due to large distance; friis loss used: " << friis_loss);
             return friis_loss;
         }
         // signal is too strong and need to be computed with ray tracing
     }
-    return GetPropagationData(a, b).m_loss;
+
+    Vector pos_a = a->GetPosition();
+    Vector pos_b = b->GetPosition();
+
+    // update position on mobility models to reflect node position in Sionna
+    CacheEntry ce = GetPropagationData(a, b);
+
+    Ptr<Node> node_a = a->GetObject<Node>();
+    Ptr<Node> node_b = b->GetObject<Node>();
+
+    // needed as the cache assumes channel reciprocity
+    if (node_a->GetId() == ce.m_a)
+    {
+        a->SetPosition(ce.m_a_position);
+        b->SetPosition(ce.m_b_position);
+    } else
+    {
+        a->SetPosition(ce.m_b_position);
+        b->SetPosition(ce.m_a_position);
+    }
+
+    Time current_time = Simulator::Now();
+    if (pos_a != a->GetPosition())
+    {
+        NS_LOG_INFO("ns3sionna::update Pos for node: " << node_a->GetId() << " from " <<
+            ": (" << pos_a.x << "," << pos_a.y << "," << pos_a.z << ") to: " <<
+            ": (" << a->GetPosition().x << "," << a->GetPosition().y << "," << a->GetPosition().z << ")");
+    }
+
+    if (pos_b != b->GetPosition())
+    {
+        NS_LOG_INFO("ns3sionna::update Pos for node: " << node_b->GetId() << " from " <<
+            ": (" << pos_b.x << "," << pos_b.y << "," << pos_b.z << ") to: " <<
+            ": (" << b->GetPosition().x << "," << b->GetPosition().y << "," << b->GetPosition().z << ")");
+    }
+
+    return ce.m_loss;
+}
+
+double
+SionnaPropagationCache::GetPropagationLoss(Ptr<const MobilityModel> a, Ptr<const MobilityModel> b) const
+{
+    Ptr<MobilityModel> tmp_a = ConstCast<MobilityModel>(a);
+    Ptr<MobilityModel> tmp_b = ConstCast<MobilityModel>(b);
+
+    return GetPropagationData(tmp_a, tmp_b).m_loss;
+}
+
+std::vector<int>
+SionnaPropagationCache::GetPropagationFreq(Ptr<const MobilityModel> a, Ptr<const MobilityModel> b) const
+{
+    Ptr<MobilityModel> tmp_a = ConstCast<MobilityModel>(a);
+    Ptr<MobilityModel> tmp_b = ConstCast<MobilityModel>(b);
+    return GetPropagationData(tmp_a, tmp_b).m_freq;
+}
+
+
+std::vector<std::complex<double>>
+SionnaPropagationCache::GetPropagationCSI(Ptr<const MobilityModel> a, Ptr<const MobilityModel> b) const
+{
+    Ptr<MobilityModel> tmp_a = ConstCast<MobilityModel>(a);
+    Ptr<MobilityModel> tmp_b = ConstCast<MobilityModel>(b);
+    return GetPropagationData(tmp_a, tmp_b).m_cfr;
 }
 
 void
 SionnaPropagationCache::SetSionnaHelper(SionnaHelper &sionnaHelper)
 {
     m_sionnaHelper = &sionnaHelper;
+}
+
+SionnaHelper*
+SionnaPropagationCache::GetSionnaHelper()
+{
+    return m_sionnaHelper;
 }
 
 void
@@ -109,6 +178,13 @@ SionnaPropagationCache::GetStats()
     return ratio;
 }
 
+void SionnaPropagationCache::PrintStats()
+{
+    std::cout << "Ns3-sionna: cache #lookups: " <<  (m_cache_hits + m_cache_miss) << ", #misses:"
+        << m_cache_miss << ", hit ratio: " <<  this->GetStats() << std::endl;
+}
+
+
 SionnaPropagationCache::CacheEntry
 SionnaPropagationCache::GetPropagationData(Ptr<MobilityModel> a, Ptr<MobilityModel> b) const
 {
@@ -123,7 +199,7 @@ SionnaPropagationCache::GetPropagationData(Ptr<MobilityModel> a, Ptr<MobilityMod
     Ptr<Node> node_b = b->GetObject<Node>();
     NS_ASSERT_MSG(node_a && node_b, "Nodes not found.");
 
-    NS_LOG_INFO("GetPropagationData:: " << node_a->GetId() << " to " << node_b->GetId());
+    NS_LOG_DEBUG("ns3sionna::GetPropagationData for lnk: " << node_a->GetId() << " to " << node_b->GetId());
 
     if (m_caching)
     {
@@ -151,7 +227,7 @@ SionnaPropagationCache::GetPropagationData(Ptr<MobilityModel> a, Ptr<MobilityMod
                 // If delay and loss exist in the cache, check if the entry is not outdated
                 if (c_entry.m_end_time >= current_time && c_entry.m_start_time <= current_time)
                 {
-                    NS_LOG_INFO("Cache HIT CSI:: " << node_a->GetId() << " to " << node_b->GetId());
+                    NS_LOG_DEBUG("\t: Cache hit for lnk: " << node_a->GetId() << " to " << node_b->GetId());
                     m_cache_hits += 1;
                     // Return cache entry as the value is still fresh
                     return c_entry;
@@ -160,7 +236,7 @@ SionnaPropagationCache::GetPropagationData(Ptr<MobilityModel> a, Ptr<MobilityMod
         }
     }
 
-    NS_LOG_INFO("Cache MISS CSI:: " << node_a->GetId() << " to " << node_b->GetId());
+    NS_LOG_INFO("\t: Cache miss for lnk: " << node_a->GetId() << " to " << node_b->GetId());
     m_cache_miss += 1;
 
     // Prepare the request message
@@ -196,15 +272,19 @@ SionnaPropagationCache::GetPropagationData(Ptr<MobilityModel> a, Ptr<MobilityMod
     // Extract the delay, loss and time to live value
     const ns3sionna::ChannelStateResponse& csi_response = reply_wrapper.channel_state_response();
 
-    NS_LOG_INFO("ZMQ::CSI_RESP #samples: " << csi_response.csi_size());
+    NS_LOG_INFO("ns3sionna::Req CSI data from sionna: #samples=" << csi_response.csi_size());
+
     // result contains also future CSI; fill-up the cache
     for (int csi_i=0; csi_i < csi_response.csi_size(); csi_i++) {
         Time start_time = NanoSeconds(csi_response.csi(csi_i).start_time());
         Time end_time = NanoSeconds(csi_response.csi(csi_i).end_time());
 
-        NS_LOG_INFO("CSI TS: " << start_time << " - " << end_time);
+        NS_LOG_DEBUG("\t\t: CSI ts= (" << start_time.GetNanoSeconds() << "ns"
+            << " - " << end_time.GetNanoSeconds() << "ns), delta="
+            << (end_time - start_time).GetNanoSeconds() << "ns");
 
         google::protobuf::uint32 txId = csi_response.csi(csi_i).tx_node().id();
+        auto txPos = csi_response.csi(csi_i).tx_node().position();
 
         for (int rx_i=0; rx_i < csi_response.csi(csi_i).rx_nodes_size(); rx_i++) {
             Time delay = NanoSeconds(csi_response.csi(csi_i).rx_nodes(rx_i).delay());
@@ -212,32 +292,31 @@ SionnaPropagationCache::GetPropagationData(Ptr<MobilityModel> a, Ptr<MobilityMod
             //Time ttl = NanoSeconds(csi_response.csi(csi_i).rx_nodes(rx_i).ttl());
 
             google::protobuf::uint32 rxId = csi_response.csi(csi_i).rx_nodes(rx_i).id();
+            auto rxPos = csi_response.csi(csi_i).rx_nodes(rx_i).position();
 
-            NS_LOG_INFO("    -> sionna Response (delay: " << delay << ", loss: " << wb_loss << ")"
+            int num_ofdm_subcarrier = csi_response.csi(csi_i).rx_nodes(rx_i).csi_imag().size();
+
+            NS_LOG_DEBUG("\t\t: Response (delay: " << delay << ", loss: " << wb_loss << ")"
               << " (TxId: " << txId << " [" << csi_response.csi(csi_i).tx_node().position().x()
               << "," << csi_response.csi(csi_i).tx_node().position().y() << "," << csi_response.csi(csi_i).tx_node().position().z() << "] -> "
               << rxId << " [" << csi_response.csi(csi_i).rx_nodes(rx_i).position().x() << "," << csi_response.csi(csi_i).rx_nodes(rx_i).position().y()
-              << "," << csi_response.csi(csi_i).rx_nodes(rx_i).position().z() << "])");
-
-            // CSI
-            std::stringstream ss;
-            ss << "[";
-            for (int i=0; i < csi_response.csi(csi_i).rx_nodes(rx_i).csi_imag().size(); i++)
-            {
-                double imag = csi_response.csi(csi_i).rx_nodes(rx_i).csi_imag(i);
-                double real = csi_response.csi(csi_i).rx_nodes(rx_i).csi_real(i);
-                ss << imag << "*1i + " << real;
-
-                if (i < csi_response.csi(csi_i).rx_nodes(rx_i).csi_imag().size() - 1)
-                    ss << ",";
-            }
-            ss << "]" << std::endl;
-            //NS_LOG_INFO("    -> CSI " << " (TxId: " << txId << " -> " << rxId << ")" << ss.str());
+              << "," << csi_response.csi(csi_i).rx_nodes(rx_i).position().z() << ",NSC" << num_ofdm_subcarrier << "])");
 
             // Add the info from all other receivers to the cache
             CacheKey otherkey = CacheKey(txId, rxId);
-            // AZU: todo: add CSI to cache
-            CacheEntry entry = CacheEntry(delay, wb_loss, start_time, end_time);
+            CacheEntry entry = CacheEntry(delay, wb_loss, start_time, end_time, num_ofdm_subcarrier,
+                txId, rxId ,Vector(txPos.x(),txPos.y(),txPos.z()), Vector(rxPos.x(),rxPos.y(),rxPos.z()));
+
+            // CFR: remove guards
+            for (int i=0; i < num_ofdm_subcarrier; i++)
+            {
+                int freq = csi_response.csi(csi_i).rx_nodes(rx_i).frequencies(i);
+                entry.m_freq.emplace_back(freq);
+
+                double imag = csi_response.csi(csi_i).rx_nodes(rx_i).csi_imag(i);
+                double real = csi_response.csi(csi_i).rx_nodes(rx_i).csi_real(i);
+                entry.m_cfr.emplace_back(real, imag);
+            }
 
             auto cache_it = m_cache.find(otherkey);
 
@@ -269,7 +348,7 @@ SionnaPropagationCache::GetPropagationData(Ptr<MobilityModel> a, Ptr<MobilityMod
         }
     }
     // cannot be reached
-    CacheEntry dummy_entry = CacheEntry(current_time, -1, current_time, current_time);
+    CacheEntry dummy_entry = CacheEntry();
     return dummy_entry;
 }
 
