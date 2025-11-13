@@ -68,7 +68,13 @@ python3 sionna_server.py
 5. Start a ns-3 example script
 ```
 cd ns-3.40/
-./ns3 run scratch/ns3-sionna/example-sionna.cc
+./ns3 run scratch/ns3-sionna/example-sionna-sensing-mobile
+```
+
+6. Plot the results
+```
+cd ns-3.40/
+python3 ./scratch/ns3-sionna/plot3d_mobile_csi.py example-sionna-sensing-mobile.csv example-sionna-sensing-mobile-pathloss.csv example-sionna-sensing-mobile-time-pos.csv
 ```
 
 Examples
