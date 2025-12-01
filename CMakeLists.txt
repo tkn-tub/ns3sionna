@@ -87,7 +87,7 @@ build_lib(
         ${libnetwork}
         ${libpropagation}
         ${libspectrum}
-        ${ZMQ_LIBRARIES}
+        ${ZeroMQ_LIBRARIES}
         ${Protobuf_LIBRARIES}
 )
 
