@@ -13,6 +13,7 @@ From: ubuntu:24.04
     # Update system packages
     apt-get update && apt-get install -y --no-install-recommends \
         wget \
+        iputils-ping \
         curl \
         git \
         build-essential \
@@ -24,8 +25,6 @@ From: ubuntu:24.04
         python3-venv \
         cmake \
         libzmq3-dev \
-        libprotobuf-dev \
-        protobuf-compiler \
         pkg-config \
         && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +34,16 @@ From: ubuntu:24.04
 
     apt-get update
     apt-get install -y libzmq3-dev cppzmq-dev llvm-15 llvm-15-dev libclang-15-dev
+
+    # Install correct protobuf version
+    git clone --branch v27.1 --recursive https://github.com/protocolbuffers/protobuf.git protobuf-27.1
+    cd protobuf-27.1
+    mkdir build
+    cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -Dprotobuf_BUILD_TESTS=OFF
+    make -j$(nproc)
+    make install
+    ldconfig
 
     # Install ns3 and ns3sionna under opt which is writeable
     cd /opt
