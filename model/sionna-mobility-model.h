@@ -40,6 +40,7 @@ class SionnaMobilityModel : public MobilityModel
 
         enum Mode
         {
+            MODE_WALL,
             MODE_DISTANCE,
             MODE_TIME
         };
@@ -48,6 +49,8 @@ class SionnaMobilityModel : public MobilityModel
 
         std::string GetMode() const;
 
+        bool GetModeWall() const;
+
         double GetModeDistance() const;
 
         Time GetModeTime() const;
@@ -55,8 +58,6 @@ class SionnaMobilityModel : public MobilityModel
         Ptr<RandomVariableStream> GetSpeed() const;
 
         Ptr<RandomVariableStream> GetDirection() const;
-
-        //void SetPropagationCache(Ptr<SionnaPropagationCache> propagationCache);
 
     private:
         Vector DoGetPosition() const override;
@@ -68,12 +69,11 @@ class SionnaMobilityModel : public MobilityModel
         Model m_model;
         Vector m_position;
         Mode m_mode;
+        bool m_modeWall;
         double m_modeDistance;
         Time m_modeTime;
         Ptr<RandomVariableStream> m_speed;
         Ptr<RandomVariableStream> m_direction;
-
-        //Ptr<SionnaPropagationCache> m_propagationCache;
 };
 
 } // namespace ns3

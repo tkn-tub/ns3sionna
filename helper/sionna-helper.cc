@@ -204,7 +204,11 @@ SionnaHelper::Start()
                 position_vector->set_y(position.y);
                 position_vector->set_z(position.z);
 
-                if (sionnaMobilityModel->GetMode() == "Time")
+                if (sionnaMobilityModel->GetMode() == "Wall")
+                {
+                    bool wall_value = sionnaMobilityModel->GetModeWall();
+                    random_walk_model->set_wall_value(wall_value);
+                } else if (sionnaMobilityModel->GetMode() == "Time")
                 {
                     int64_t time_value = sionnaMobilityModel->GetModeTime().GetNanoSeconds();
                     NS_ASSERT_MSG(time_value > 0, "Time value must be greater than 0 seconds.");

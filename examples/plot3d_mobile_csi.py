@@ -17,7 +17,7 @@ time_pos = np.loadtxt(fname_time_pos, delimiter=',').astype(float)
 
 # reshape
 NFFT = 3073
-N = 10
+N = int(csi.shape[0] / NFFT)
 all_csi = csi.reshape(N, NFFT)
 
 # plot mag squared

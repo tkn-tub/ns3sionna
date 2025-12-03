@@ -39,7 +39,7 @@ message SimInitMessage {
             Vector position = 1;
             
             oneof mode {
-                uint32 wall_value = 2;
+                bool wall_value = 2;
                 int64 time_value = 3;
                 double distance_value = 4;
             }

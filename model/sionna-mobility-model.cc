@@ -9,6 +9,7 @@
 #include "sionna-mobility-model.h"
 
 #include "ns3/double.h"
+#include "ns3/boolean.h"
 #include "ns3/enum.h"
 #include "ns3/log.h"
 #include "ns3/pointer.h"
@@ -41,12 +42,19 @@ SionnaMobilityModel::GetTypeId()
             .AddAttribute("Mode",
                           "The mode indicates the condition used to "
                           "change the current speed and direction",
-                          EnumValue(SionnaMobilityModel::MODE_DISTANCE),
+                          EnumValue(SionnaMobilityModel::MODE_WALL),
                           MakeEnumAccessor(&SionnaMobilityModel::m_mode),
-                          MakeEnumChecker(SionnaMobilityModel::MODE_DISTANCE,
+                          MakeEnumChecker(SionnaMobilityModel::MODE_WALL,
+                                          "Wall",
+                                          SionnaMobilityModel::MODE_DISTANCE,
                                           "Distance",
                                           SionnaMobilityModel::MODE_TIME,
                                           "Time"))
+            .AddAttribute("Wall",
+                          "Change current direction and speed after hitting an obstacle (e.g. wall).",
+                          BooleanValue(true),
+                          MakeBooleanAccessor(&SionnaMobilityModel::m_modeWall),
+                          MakeBooleanChecker())
             .AddAttribute("Time",
                           "Change current direction and speed after moving for this delay.",
                           TimeValue(Seconds(1.0)),
@@ -94,7 +102,10 @@ SionnaMobilityModel::GetModel() const
 std::string
 SionnaMobilityModel::GetMode() const
 {
-    if (m_mode == SionnaMobilityModel::MODE_TIME)
+    if (m_mode == SionnaMobilityModel::MODE_WALL)
+    {
+        return "Wall";
+    } else if (m_mode == SionnaMobilityModel::MODE_TIME)
     {
         return "Time";
     }
@@ -102,6 +113,12 @@ SionnaMobilityModel::GetMode() const
     {
         return "Distance";
     }
+}
+
+bool
+SionnaMobilityModel::GetModeWall() const
+{
+    return m_modeWall;
 }
 
 double
@@ -146,11 +163,4 @@ SionnaMobilityModel::DoGetVelocity() const
     return Vector(0.0, 0.0, 0.0);
 }
 
-/*
-void
-SionnaMobilityModel::SetPropagationCache(Ptr<SionnaPropagationCache> propagationCache)
-{
-    m_propagationCache = propagationCache;
-}
-*/
 } // namespace ns3

@@ -136,9 +136,9 @@ main(int argc, char* argv[])
     bool caching = true;
     std::string environment = "simple_room/simple_room.xml";
     int wifi_channel_num = 42; // center at 5210
-    int app_max_packets = 10;
+    int sim_end_time_sec = 10;
     int channel_width = 80;
-    int min_coherence_time_ms = 100; // v=18km/h -> 1ms
+    int min_coherence_time_ms = 10; // total sim duration
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("verbose", "Enable logging", verbose);
@@ -146,7 +146,7 @@ main(int argc, char* argv[])
     cmd.AddValue("caching", "Enable caching of propagation delay and loss", caching);
     cmd.AddValue("environment", "Xml file of environment", environment);
     cmd.AddValue("channel", "The WiFi channel number", wifi_channel_num);
-    cmd.AddValue("appMaxPackets", "The maximum number of packets transmitted by app", app_max_packets);
+    cmd.AddValue("simEndTimeSec", "The total simulation time", sim_end_time_sec);
     cmd.AddValue("channelWidth", "The WiFi channel width in MHz", channel_width);
     cmd.AddValue("minCoherenceTimeMs", "The minimal coherence time in msec", min_coherence_time_ms);
     cmd.Parse(argc, argv);
@@ -234,8 +234,8 @@ main(int argc, char* argv[])
                               EnumValue(SionnaMobilityModel::MODEL_RANDOM_WALK),
                               "Speed",
                               StringValue("ns3::ConstantRandomVariable[Constant=1.0]"),
-                              "Distance",
-                              DoubleValue(6));
+                              "Wall",
+                              BooleanValue(true));
     mobility.Install(wifiStaNode);
 
     auto staMobility = wifiStaNode.Get(0)->GetObject<SionnaMobilityModel>();
@@ -265,7 +265,7 @@ main(int argc, char* argv[])
 
     ApplicationContainer serverApps = echoServer.Install(wifiApNode);
     serverApps.Start(Seconds(1.0));
-    serverApps.Stop(Seconds(10.0));
+    serverApps.Stop(Seconds(30.0));
 
     // App layer tracing of RX events to capture CSI
     Config::Connect("/NodeList/*/ApplicationList/*/$ns3::UdpEchoServer/RxWithAddresses",
@@ -275,13 +275,13 @@ main(int argc, char* argv[])
     //std::cout << "AP IP: " << wifi_ip_addr << std::endl;
 
     UdpEchoClientHelper echoClient(wifi_ip_addr, 9);
-    echoClient.SetAttribute("MaxPackets", UintegerValue(app_max_packets));
+    echoClient.SetAttribute("MaxPackets", UintegerValue(1000000));
     echoClient.SetAttribute("Interval", TimeValue(MilliSeconds(50)));
     echoClient.SetAttribute("PacketSize", UintegerValue(1024));
 
     ApplicationContainer clientApps = echoClient.Install(wifiStaNode);
     clientApps.Start(Seconds(1.0));
-    clientApps.Stop(Seconds(2.0));
+    clientApps.Stop(Seconds(sim_end_time_sec));
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
@@ -302,7 +302,7 @@ main(int argc, char* argv[])
     }
 
     // Simulation end
-    Simulator::Stop(Seconds(2.1));
+    Simulator::Stop(Seconds(sim_end_time_sec));
 
     sionnaHelper.Start();
 
