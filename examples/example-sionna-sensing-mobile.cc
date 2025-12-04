@@ -212,6 +212,12 @@ main(int argc, char* argv[])
 
     std::string channelStr = "{" + std::to_string(wifi_channel_num) + ", " + std::to_string(channel_width) + ", BAND_5GHZ, 0}";
 
+    std::string wifiManager("Ideal");
+    uint32_t rtsThreshold = 999999; // disabled even for large A-MPDU
+    wifi.SetRemoteStationManager("ns3::" + wifiManager + "WifiManager",
+                                 "RtsCtsThreshold",
+                                 UintegerValue(rtsThreshold));
+
     NetDeviceContainer staDevices;
     mac.SetType("ns3::StaWifiMac", "Ssid", SsidValue(ssid), "ActiveProbing", BooleanValue(false));
     spectrumPhy.Set("ChannelSettings", StringValue(channelStr));
