@@ -312,10 +312,12 @@ class SionnaEnv:
 
         # max single transmitter
         assert h_raw.shape[2] == 1
+        num_computed_lnks = h_raw.shape[0]
 
         # Create ZMQ response
         chan_response = reply_wrapper.channel_state_response
 
+        Tc_p2mp_lah = []
         for lah_time_idx, lah_time in enumerate(lah_time_vec): # iterate over time
             csi = chan_response.csi.add()
 
@@ -378,8 +380,10 @@ class SionnaEnv:
 
             # take the worst case Tc from all RX nodes
             Tc_p2mp = int(np.min(np.asarray(csi_tc_arr)))
+            Tc_p2mp_lah.append(Tc_p2mp)
             csi.end_time = csi.start_time + Tc_p2mp - 1 # -1ns to have non-overlapping intervals
 
+        print(f'{self.sim_time / 1e9}s: Computed CSI with Tc: {round(np.asarray(Tc_p2mp_lah) / 1e6,2)}ms, #links: {num_computed_lnks}')
 
 
     def _place_tx_rx_nodes_with_lah(self, lah_time_vec: list, tx_node: int, rx_nodes: list):
@@ -477,7 +481,7 @@ class SionnaEnv:
         # take the worst case Tc from all RX nodes
         Tc_p2mp = int(np.min(np.asarray(csi_tc_arr)))
 
-        print(f'{self.sim_time / 1e9}s: Computed CSI with Tc: {round(Tc_p2mp / 1e6,2)}ms')
+        print(f'{self.sim_time / 1e9}s: Computed CSI with Tc: {round(Tc_p2mp / 1e6,2)}ms, #links: {len(rx_nodes)}')
 
         csi.end_time = self.sim_time + Tc_p2mp
 
