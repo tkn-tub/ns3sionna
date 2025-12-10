@@ -1,0 +1,11 @@
+sionna
+sionna-rt
+mitsuba
+numpy
+protobuf
+tensorflow
+pyzmq
+gputil
+
+# optional for plotting
+matplotlib
